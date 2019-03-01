@@ -1,0 +1,17 @@
+// Program - save matrix output as a datafile
+
+use "http://www.stata-press.com/data/r15/auto", clear
+ 
+regress mpg weight gear_ratio foreign
+matrix model1 = e(b)
+matrix list model1 
+
+regress mpg weight gear_ratio foreign
+matrix model2 = e(b)
+matrix list model2 
+
+matrix combinematrix = model1\model2
+matrix list combinematrix 
+
+clear
+svmat combinematrix,  names(eqcol)
