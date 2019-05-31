@@ -1,0 +1,107 @@
+/*-------------------------------------------------------------------*/
+/* NOTE: The order of random number generation commands matter       */
+/*-------------------------------------------------------------------*/
+clear all					// Clear Stata's memore
+set seed 15 				// set the random number seed to 15
+set obs 200					// Create a dataset with 200 obs
+
+* Generate uniform distribution between interval - set seed once
+set seed 15
+generate age1a = runiformint(18,65)
+generate age2a = runiformint(18,65)
+generate age3a = runiformint(18,65)
+
+* Generate uniform distribution between interval - set seed each time
+set seed 15
+generate age1b = runiformint(18,65)
+set seed 15
+generate age2b = runiformint(18,65)
+set seed 15
+generate age3b = runiformint(18,65)
+
+list age* in 1/5
+
+/* Output - set seed once and RNG state changes
+     +-----------------------------------------------+
+     | age1a   age2a   age3a   age1b   age2b   age3b |
+     |-----------------------------------------------|
+  1. |    24      48      65      24      24      24 |
+  2. |    49      63      50      49      49      49 |
+  3. |    26      30      52      26      26      26 |
+  4. |    60      22      61      60      60      60 |
+  5. |    26      56      39      26      26      26 |
+     +-----------------------------------------------+
+*/
+
+sum age*
+
+/*-------------------------------------------------------------------*/
+/* NOTE: The setting seed inside loop seems to make a difference     */
+/*-------------------------------------------------------------------*/
+
+* Stata uses different pseudo-random number generators for different versions
+*Version control for all random-number generators is specified at the time the set seed 
+clear all					// Clear Stata's memory
+set obs 200					// Create a dataset with 200 obs
+
+* Set seed inside loop using version command
+foreach version in 11 12 13 14 15 {
+	display `version'
+	version `version': set seed 123456
+	version `version': display c(rngstate)
+	generate rnva`version' = runiform()
+}
+
+* Outside of the foreach loop versions 11, 12, 13 work differently
+local version 11
+	version `version': set seed 123456
+	version `version': display c(rngstate) // Notice the RNG State is different from loop
+	generate rnvc`version' = runiform()	
+local version 12
+	version `version': set seed 123456
+	version `version': display c(rngstate)
+	generate rnvc`version' = runiform()
+local version 13
+	version `version': set seed 123456 
+	version `version': display c(rngstate)
+	generate rnvc`version' = runiform()
+local version 14
+	version `version': set seed 123456 
+	version `version': display c(rngstate)
+	generate rnvc`version' = runiform()
+local version 15
+	version `version': set seed 123456
+	version `version': display c(rngstate)
+	generate rnvc`version' = runiform()
+	
+
+format rnv* %5.3fc
+sum rnv*
+list rnva* in 1/5
+
+/* Output - All RNG versions produce the same results
+     +--------------------------------------------+
+     | rnva11   rnva12   rnva13   rnva14   rnva15 |
+     |--------------------------------------------|
+  1. |  0.180    0.180    0.180    0.180    0.180 |
+  2. |  0.775    0.775    0.775    0.775    0.775 |
+  3. |  0.877    0.877    0.877    0.877    0.877 |
+  4. |  0.657    0.657    0.657    0.657    0.657 |
+  5. |  0.173    0.173    0.173    0.173    0.173 |
+     +--------------------------------------------+
+*/
+
+	 
+list rnvc* in 1/5
+
+/* Output - RNG versions 11, 12,13 produce the different results
+     +--------------------------------------------+
+     | rnvc11   rnvc12   rnvc13   rnvc14   rnvc15 |
+     |--------------------------------------------|
+  1. |  0.191    0.094    0.653    0.180    0.180 |
+  2. |  0.007    0.525    0.550    0.775    0.775 |
+  3. |  0.150    0.524    0.519    0.877    0.877 |
+  4. |  0.037    0.184    0.093    0.657    0.657 |
+  5. |  0.108    0.488    0.159    0.173    0.173 |
+     +--------------------------------------------+
+*/
