@@ -1,0 +1,278 @@
+/*-------1---------2---------3---------4---------5---------6--------*/
+/* Start Log File: Change working directory to project directory    */
+/*-------1---------2---------3---------4---------5---------6--------*/
+
+capture log close   // suppress error and close any open logs
+log using STATA15_0av1_MCS_2019-05-30, replace text
+/********-*********-*********-*********-*********-*********-*********/
+/* Description of Program                                           */
+/********-*********-*********-*********-*********-*********-*********/
+// program:    STATA15_0av1_MCS_2019-05-30.do
+// task:       Explore Monte Carlo Simulation for Output
+// version:    v1
+// project:    Stata 15 - General Method
+// author:     Nathanael Rosenheim May 29, 2019
+
+/*------------------------------------------------------------------*/
+/* Control Stata                                                    */
+/*------------------------------------------------------------------*/
+* Generic do file that sets up stata environment
+clear all          // Clear existing data files
+macro drop _all    // Drop macros from memory
+version 15.1       // Set Version
+set more off       // Tell Stata to not pause for --more-- messages
+set varabbrev off  // Turn off variable abbreviations
+set linesize 80    // Set Line Size - 80 Characters for Readability
+numlabel _all, add // Print Prefix numeric values to value labels 
+*set matsize 5000   // Set Matrix Size if program has a large matrix
+*set max_memory 2g  // if the file size is larger than 64M change size
+
+/*-------------------------------------------------------------------*/
+/* Set Provenance                                                    */
+/*-------------------------------------------------------------------*/
+// What is the do file name? What program is needed to replicate results?
+global dofilename "STATA15_0av1_MCS_2019-05-30" 
+
+* Stata can create folders if they do not exist
+capture mkdir ${dofilename}     // Folder saves all outputs from do file
+
+/*-------------------------------------------------------------------*/
+/* Motivation for program                                            */
+/*-------------------------------------------------------------------*/
+/* Reference
+Huber, C. (10 Jan 2019). Calculating power using Monte Carlo simulations, 
+	part 1: The basics. Stata Blog. 
+	https://blog.stata.com/2019/01/10/
+	calculating-power-using-monte-carlo-simulations-part-1-the-basics/
+Huber, C. (29 Jan 2019). Calculating power using Monte Carlo simulations, 
+	part 2: Running your simulation using power. Stata Blog. 
+	https://blog.stata.com/2019/01/29/
+	calculating-power-using-monte-carlo-simulations-part-2-running-your-simulation-using-power/
+*/
+/* HOW TO REPLICATE ONE MCS REPLICATION:
+ From STATA's Set Seed Help file:
+ When we do simulations at StataCorp, we record c(rngstate) for each
+    replication.  Just like everybody else, we record results from
+    replications as observations in datasets; we just happen to have an extra
+    variable in the dataset, namely, a string variable named state.  That
+    string is filled in observation by observation from the then-current
+    values of c(rngstate), which is a function and so can be used in any
+    context that a function can be used in Stata.
+
+To accomplish the above here is some guidance from the Stata List:
+https://www.statalist.org/forums/forum/general-stata-discussion/general/
+1424296-saving-the-rngstate-of-each-replication-in-a-monte-carlo-simulation
+*/
+
+/*-------------------------------------------------------------------*/
+/* How to use program to create a useful program                     */
+/*-------------------------------------------------------------------*/
+
+capture program drop simttest
+program simttest, rclass
+    version 15.1
+
+    // DEFINE THE INPUT PARAMETERS AND THEIR DEFAULT VALUES
+    syntax, n(integer)          ///  Sample size
+          [ alpha(real 0.05)    ///  Alpha level
+            m0(real 0)          ///  Mean under the null
+            ma(real 1)          ///  Mean under the alternative
+            sd(real 1)          ///  Standard deviation
+			savereps     		///  Save Results for each replication
+			mergereps   ]		//	 Merge Results for each replication
+	
+	// Step Through Replication Counter
+	global repcount = ${repcount} + 1
+	
+	// Save the RNG State at the start of the program
+	// The RNG Stata is 5011 characters long in Stata 14+
+	// The postfile command to save the output does not support long strings
+	local state = c(rngstate)
+	scalar state1 = substr("`state'", 1,    2000)
+    scalar state2 = substr("`state'", 2001, 2000)
+    scalar state3 = substr("`state'", 4001, .)
+	
+    // GENERATE THE RANDOM DATA AND TEST THE NULL HYPOTHESIS
+    drawnorm y${repcount}, n(`n') means(`ma') sds(`sd') clear
+	
+	// Save Seed State for replication as a note
+	notes y${repcount}: `state'
+
+	// gen unique id
+	gen int id = _n, before(y${repcount})
+	sort id
+	
+	// Save results for each replication
+	 if "`savereps'" != "" {
+		 save ${dofilename}/${dofilename}_${repcount}.dta, replace
+     }
+	 // Merge the results from each rep
+	 if "`mergereps'" != "" & "`savereps'" == "" & ${repcount} == 1  {
+		 save ${dofilename}/${dofilename}_1.dta, replace
+	 }
+	 // For the second step start the merge file
+	 if "`mergereps'" != "" & ${repcount} == 2 {
+	     * Add second replication to the first replication to start the merge
+		 merge 1:1 id using ${dofilename}/${dofilename}_1.dta
+		 drop _merge // drop merge variable
+		 save ${dofilename}/${dofilename}_mergereps.dta, replace
+     }
+	 // For every rep after 2 update the merge file
+	 if "`mergereps'" != "" & ${repcount} > 2 {
+		 * Add current file to the mergereps file
+		 merge 1:1 id using ${dofilename}/${dofilename}_mergereps.dta
+		 drop _merge // drop merge variable
+		 order _all, alphabetic
+		 order id
+		 save ${dofilename}/${dofilename}_mergereps.dta, replace
+     }
+	 
+	
+    ttest y${repcount} = `m0'
+
+    // RETURN RESULTS
+    return scalar reject = (r(p)<`alpha') 
+	
+	capture post buffer (r(p)<`alpha') (state1) (state2) (state3)
+end
+
+* Check program
+global repcount = 0 // start rep counter at 0
+simttest, n(100) m0(70) ma(75) sd(15) alpha(0.05)
+return list
+ 
+/*-------------------------------------------------------------------*/
+/* How to use simulate to run your program many times                */
+/*-------------------------------------------------------------------*/
+
+global repcount = 0 // start rep counter at 0
+simulate reject=r(reject), reps(5) seed(12345):              ///
+         simttest, n(100) m0(70) ma(75) sd(15) alpha(0.05)
+list in 1/5
+summarize reject
+
+/*-------------------------------------------------------------------*/
+/* How to use simulate with postfile to save seeds                   */
+/*-------------------------------------------------------------------*/
+
+global repcount = 0 // start rep counter at 0
+// Save Results to Postfile with each RNG State
+postfile buffer int(reject) str2000(state1 state2 state3) ///
+	using ${dofilename}/${dofilename}_results.dta, replace
+simulate reject=r(reject), reps(5) seed(65498765):              ///
+         simttest, n(100) m0(70) ma(75) sd(15) alpha(0.05) savereps mergereps
+postclose buffer
+
+/*-------------------------------------------------------------------*/
+/* Look at results for each rep and rebuild full RNG State           */
+/*-------------------------------------------------------------------*/
+
+use ${dofilename}/${dofilename}_results.dta, clear
+gen strL state = state1+state2+state3
+drop state1 state2 state3
+save ${dofilename}/${dofilename}_results.dta, replace
+
+/*-------------------------------------------------------------------*/
+/* Replicate one replication from the simulation using results       */
+/*-------------------------------------------------------------------*/
+
+* Demonstration that each replication can be replicated
+use ${dofilename}/${dofilename}_results.dta, clear
+* Select state 5 from observation 5
+local selectstate = state[5]
+set rngstate `selectstate'
+
+drawnorm y, n(100) means(75) sds(15) clear
+// Results should match replication number 5
+ttest y = 70
+
+/*-------------------------------------------------------------------*/
+/* Replicate one replication from the simulation using merged reps   */
+/*-------------------------------------------------------------------*/
+
+* Demonstration that each replication can be replicated
+use ${dofilename}/${dofilename}_mergereps.dta, clear
+* Select state 5 the note for variable y5
+
+list y* in 1/5
+
+local selectstate = "`y5[note1]'"
+set rngstate `y5[note1]'
+
+
+drawnorm y, n(100) means(75) sds(15) clear
+list y* in 1/5
+// Results should match replication number 5
+ttest y = 70
+
+* Statistical power is the probability of rejecting the null hypothesis 
+* when the null hypothesis is false."
+display "The null hypothesis is that the mean is 70."
+display r(p)
+display r(p)<0.5
+
+/*-------------------------------------------------------------------*/
+/* Run the program 1000 times                                        */
+/*-------------------------------------------------------------------*/
+
+global repcount = 0 // start rep counter at 0
+// Save Results to Postfile with each RNG State
+postfile buffer int(reject) str2000(state1 state2 state3) ///
+	using ${dofilename}/${dofilename}_resultsv2.dta, replace
+simulate reject=r(reject), reps(1000) seed(65498765):              ///
+         simttest, n(100) m0(70) ma(75) sd(15) alpha(0.05) mergereps
+postclose buffer
+
+sum reject
+
+/*-------------------------------------------------------------------*/
+/* Look at results for each rep and rebuild full RNG State           */
+/*-------------------------------------------------------------------*/
+
+use ${dofilename}/${dofilename}_resultsv2.dta, clear
+gen strL state = state1+state2+state3
+drop state1 state2 state3
+save ${dofilename}/${dofilename}_resultsv3.dta, replace
+
+sum reject
+
+/*-------------------------------------------------------------------*/
+/* Replicate one replication from the simulation using merged reps   */
+/*-------------------------------------------------------------------*/
+
+* Demonstration that each replication can be replicated
+use ${dofilename}/${dofilename}_mergereps.dta, clear
+
+
+* Select replication  
+local selectrep = 8
+
+* Look at random variables for selected rep
+list y`selectrep' in 1/5
+ttest y`selectrep' = 70
+
+* Set the RNG state to the selected rep RNG state
+local selectstate = "`y`selectrep'[note1]'"
+set rngstate `y`selectrep'[note1]'
+
+drawnorm y, n(100) means(75) sds(15) clear
+
+* Confirm that the random variables match the selected rep
+list y* in 1/5
+// Results should match replication 
+ttest y = 70
+
+* Statistical power is the probability of rejecting the null hypothesis 
+* when the null hypothesis is false."
+display "The null hypothesis is that the mean is 70."
+display r(p)
+display r(p)<0.5
+
+
+/*-------------------------------------------------------------------*/
+/* End Log                                                           */
+/*-------------------------------------------------------------------*/
+
+log close
+exit
+
